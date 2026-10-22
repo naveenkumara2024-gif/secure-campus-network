@@ -1,0 +1,189 @@
+# campus.clab.yml - Programmable Secure Campus Network (single source of truth)
+#
+#   make up        (= containerlab deploy -t campus.clab.yml)
+#   make verify    (acceptance matrix, CLAUDE.md section 6)
+#
+# Addressing is defined in CLAUDE.md section 3 and rendered by each node's init.sh.
+# Interface naming used everywhere below:
+#   core1/core2 : eth-peer1/eth-peer2 (inter-core LACP members), eth-edge,
+#                 eth-acc1..eth-acc3, eth-srv (access/server-switch downlinks)
+#   edge1/edge2 : eth-core, eth-isp ; edge2 also eth-branch (172.16.30.0/24)
+#   isp1/isp2   : eth-edge, eth-transit ("internet" between the two ISPs)
+#   acc*/srv-sw : eth-up1 (to core1), eth-up2 (to core2), p1..pN (access ports)
+#   servers/PCs : eth1
+#
+# Container names are clab-campus-<node>, as used by docs/demo-runsheet.md.
+name: campus
+
+mgmt:
+  network: clab
+  ipv4-subnet: 172.20.20.0/24      # containerlab default; all lab subnets stay off it
+
+topology:
+  defaults:
+    kind: linux                    # linux nodes run privileged by default (nft, bridges, bonds)
+    # A restarted container comes back without its lab links, so never auto-restart:
+    # after a Docker/WSL restart the lab shows as stopped and `make up` redeploys it.
+    restart-policy: "no"
+    binds:
+      - nodes/common:/lab/common:ro
+
+  groups:
+    core:
+      image: quay.io/frrouting/frr:10.4.5   # Docker Hub frrouting/frr stops at v8.4.1 (NOTES.md)
+      binds: [nodes/core:/lab/node:ro]
+      cmd: sh /lab/node/init.sh
+      sysctls:
+        net.ipv4.ip_forward: 1
+      labels: {graph-icon: switch, graph-group: core, graph-level: 3}
+    edge:
+      image: campus/vpn:latest     # built from images/vpn by `make images`
+      binds: [nodes/edge:/lab/node:ro]
+      cmd: sh /lab/node/init.sh
+      sysctls:
+        net.ipv4.ip_forward: 1
+      labels: {graph-icon: router, graph-group: edge, graph-level: 2}
+    isp:
+      image: alpine:3.20
+      binds: [nodes/isp:/lab/node:ro]
+      cmd: sh /lab/node/init.sh
+      sysctls:
+        net.ipv4.ip_forward: 1
+      labels: {graph-icon: cloud, graph-group: wan, graph-level: 1}
+    access:
+      image: alpine:3.20
+      binds: [nodes/access:/lab/node:ro]
+      cmd: sh /lab/node/init.sh
+      labels: {graph-icon: switch, graph-group: access, graph-level: 4}
+    server:
+      image: alpine:3.20
+      binds: [nodes/servers:/lab/node:ro]
+      cmd: sh /lab/node/init.sh
+      labels: {graph-icon: server, graph-group: server-farm, graph-level: 5}
+    host:
+      image: wbitt/network-multitool:alpine-extra
+      binds: [nodes/hosts:/lab/node:ro]
+      cmd: sh /lab/node/init.sh
+      labels: {graph-icon: client, graph-group: endpoints, graph-level: 5}
+
+  nodes:
+    # --- WAN ---------------------------------------------------------------
+    isp1:
+      group: isp
+      labels: {graph-posX: "180", graph-posY: "40"}
+    isp2:
+      group: isp
+      labels: {graph-posX: "820", graph-posY: "40"}
+    # --- Edge (FRR + NAT + strongSwan PQ-IPsec) ----------------------------
+    edge1:
+      group: edge
+      labels: {graph-posX: "180", graph-posY: "160"}
+    edge2:
+      group: edge
+      labels: {graph-posX: "820", graph-posY: "160"}
+    # --- Collapsed core (FRR + keepalived + bridges + inter-VLAN policy) ---
+    core1:
+      group: core
+      labels: {graph-posX: "330", graph-posY: "290"}
+    core2:
+      group: core
+      labels: {graph-posX: "670", graph-posY: "290"}
+    # --- Access layer (bridge + RSTP + Campus Guardian) --------------------
+    acc1:
+      group: access
+      labels: {graph-posX: "120", graph-posY: "440"}
+    acc2:
+      group: access
+      labels: {graph-posX: "390", graph-posY: "440"}
+    acc3:
+      group: access
+      labels: {graph-posX: "620", graph-posY: "440"}
+    srv-sw:
+      group: access
+      labels: {graph-posX: "880", graph-posY: "440"}
+    # --- Server farm, VLAN 40 (CLAUDE.md section 3 static IPs) -------------
+    dhcp:
+      group: server              # Kea DHCPv4, 10.10.40.10 (image finalised in M9)
+      labels: {graph-posX: "760", graph-posY: "590"}
+    dns:
+      group: server              # unbound, 10.10.40.11
+      labels: {graph-posX: "820", graph-posY: "590"}
+    radius:
+      group: server              # FreeRADIUS, 10.10.40.12
+      image: freeradius/freeradius-server:latest
+      labels: {graph-posX: "880", graph-posY: "590"}
+    syslog:
+      group: server              # rsyslog collector, 10.10.40.13
+      labels: {graph-posX: "940", graph-posY: "590"}
+    ntp:
+      group: server              # chrony, 10.10.40.14
+      labels: {graph-posX: "1000", graph-posY: "590"}
+    web:
+      group: server              # nginx, 10.10.40.15
+      image: nginx:alpine
+      labels: {graph-posX: "1060", graph-posY: "590"}
+    # --- Endpoints -----------------------------------------------------------
+    pc-student:
+      group: host                # VLAN 20, acc1 p1
+      labels: {graph-posX: "40", graph-posY: "590"}
+    attacker:
+      group: host                # VLAN 20, acc1 p2 (validation harness, M10)
+      image: alpine:3.20
+      labels: {graph-posX: "120", graph-posY: "590"}
+    phone:
+      group: host                # VLAN 100 (voice), acc1 p3
+      labels: {graph-posX: "200", graph-posY: "590"}
+    pc-faculty:
+      group: host                # VLAN 10, acc2 p1
+      labels: {graph-posX: "340", graph-posY: "590"}
+    pc-staff:
+      group: host                # VLAN 50 (staff Wi-Fi, modelled wired), acc2 p2
+      labels: {graph-posX: "440", graph-posY: "590"}
+    pc-library:
+      group: host                # VLAN 30, acc3 p1
+      labels: {graph-posX: "570", graph-posY: "590"}
+    pc-guest:
+      group: host                # VLAN 60 (guest Wi-Fi, modelled wired), acc3 p2
+      labels: {graph-posX: "670", graph-posY: "590"}
+    branch-host:
+      group: host                # remote branch LAN 172.16.30.10, behind edge2
+      labels: {graph-posX: "980", graph-posY: "160", graph-level: "2"}
+
+  links:
+    # WAN: edge <-> ISP public /30s, and the "internet" between the ISPs
+    - endpoints: ["edge1:eth-isp", "isp1:eth-edge"]          # 203.0.113.0/30
+    - endpoints: ["edge2:eth-isp", "isp2:eth-edge"]          # 198.51.100.0/30
+    - endpoints: ["isp1:eth-transit", "isp2:eth-transit"]    # internet transit (NOTES.md)
+    - endpoints: ["edge2:eth-branch", "branch-host:eth1"]    # 172.16.30.0/24
+    # Core <-> edge OSPF /30s
+    - endpoints: ["core1:eth-edge", "edge1:eth-core"]        # 10.10.211.0/30
+    - endpoints: ["core2:eth-edge", "edge2:eth-core"]        # 10.10.212.0/30
+    # Inter-core: two members of the 802.3ad LACP bond (trunk + 10.10.200.0/30)
+    - endpoints: ["core1:eth-peer1", "core2:eth-peer1"]
+    - endpoints: ["core1:eth-peer2", "core2:eth-peer2"]
+    # Access uplinks: every access switch is dual-homed (RSTP picks one)
+    - endpoints: ["acc1:eth-up1", "core1:eth-acc1"]
+    - endpoints: ["acc1:eth-up2", "core2:eth-acc1"]
+    - endpoints: ["acc2:eth-up1", "core1:eth-acc2"]
+    - endpoints: ["acc2:eth-up2", "core2:eth-acc2"]
+    - endpoints: ["acc3:eth-up1", "core1:eth-acc3"]
+    - endpoints: ["acc3:eth-up2", "core2:eth-acc3"]
+    - endpoints: ["srv-sw:eth-up1", "core1:eth-srv"]
+    - endpoints: ["srv-sw:eth-up2", "core2:eth-srv"]
+    # ACC-SW1 access ports (Guardian demo switch)
+    - endpoints: ["acc1:p1", "pc-student:eth1"]
+    - endpoints: ["acc1:p2", "attacker:eth1"]
+    - endpoints: ["acc1:p3", "phone:eth1"]
+    # ACC-SW2 access ports
+    - endpoints: ["acc2:p1", "pc-faculty:eth1"]
+    - endpoints: ["acc2:p2", "pc-staff:eth1"]
+    # ACC-SW3 access ports
+    - endpoints: ["acc3:p1", "pc-library:eth1"]
+    - endpoints: ["acc3:p2", "pc-guest:eth1"]
+    # SRV-SW server ports
+    - endpoints: ["srv-sw:p1", "dhcp:eth1"]
+    - endpoints: ["srv-sw:p2", "dns:eth1"]
+    - endpoints: ["srv-sw:p3", "radius:eth1"]
+    - endpoints: ["srv-sw:p4", "syslog:eth1"]
+    - endpoints: ["srv-sw:p5", "ntp:eth1"]
+    - endpoints: ["srv-sw:p6", "web:eth1"]

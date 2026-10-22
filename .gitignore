@@ -1,0 +1,10 @@
+# containerlab runtime state
+clab-campus/
+.campus.clab.yml.bak
+*.clab.yml.bak
+# demo recordings (make record)
+recordings/
+# editor / OS noise
+.vscode/
+*.swp
+Thumbs.db

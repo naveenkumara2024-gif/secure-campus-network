@@ -1,0 +1,7 @@
+# Everything here runs inside Linux containers: keep LF line endings even on a
+# Windows checkout (CRLF breaks shell scripts, nft files and YAML).
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.pcap binary
+*.pcapng binary
