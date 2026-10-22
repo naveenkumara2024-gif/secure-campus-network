@@ -37,6 +37,7 @@ declare -A PENDING=(
   [V11]="M8 PQ-IPsec"       [V12]="M9 services"
 )
 
+wait_lab_ready 60 || true
 printf '%s== campus lab acceptance matrix ==%s\n' "$C_C" "$C_0"
 for id in V1 V2 V3 V4 V5 V6 V7 V8 V9 V10 V11 V12; do
   if declare -F "check_$id" >/dev/null; then

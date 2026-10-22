@@ -37,7 +37,7 @@ topology:
         net.ipv4.ip_forward: 1
       labels: {graph-icon: switch, graph-group: core, graph-level: 3}
     edge:
-      image: campus/vpn:latest     # built from images/vpn by `make images`
+      image: campus/vpn:latest     # built from images/vpn by `make images` (campus/* = local builds)
       binds: [nodes/edge:/lab/node:ro]
       cmd: sh /lab/node/init.sh
       sysctls:
@@ -51,7 +51,7 @@ topology:
         net.ipv4.ip_forward: 1
       labels: {graph-icon: cloud, graph-group: wan, graph-level: 1}
     access:
-      image: alpine:3.20
+      image: campus/access:latest  # alpine:3.20 + iproute2/nftables (images/access)
       binds: [nodes/access:/lab/node:ro]
       cmd: sh /lab/node/init.sh
       labels: {graph-icon: switch, graph-group: access, graph-level: 4}
@@ -110,7 +110,7 @@ topology:
       labels: {graph-posX: "820", graph-posY: "590"}
     radius:
       group: server              # FreeRADIUS, 10.10.40.12
-      image: freeradius/freeradius-server:latest
+      image: campus/radius:latest  # freeradius-server:3.2.10 + iproute2 (images/radius)
       labels: {graph-posX: "880", graph-posY: "590"}
     syslog:
       group: server              # rsyslog collector, 10.10.40.13

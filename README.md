@@ -27,7 +27,13 @@ make verify    # acceptance matrix V1..V12 (PASS / FAIL / SKIP per row)
 make down      # destroy the lab
 ```
 
-`make up`, `make down` and `make verify` are safe to re-run.
+`make up`, `make down` and `make verify` are safe to re-run. `make up` returns once every
+node has finished configuring itself, and does nothing if the lab is already healthy.
+After editing a config or init script, run `make redeploy` to rebuild the lab with it.
+`make accept M=M2` runs one milestone's acceptance tests (`M=all` runs every built one).
+
+Every lab address lives in one file, [nodes/common/addressing.sh](nodes/common/addressing.sh),
+which the nodes and the test scripts both read.
 
 ### Docker inside WSL, not Docker Desktop
 
@@ -72,7 +78,7 @@ Do it on good Wi-Fi beforehand. Later deploys work offline.
 | WAN | isp1, isp2 | Alpine, static routes |
 | Edge | edge1, edge2 | Debian trixie: FRR, nftables NAT, strongSwan 6 |
 | Core | core1, core2 | FRR 10.4: VLAN bridges + SVIs, OSPF, VRRP, LACP |
-| Access | acc1, acc2, acc3, srv-sw | Alpine bridge, RSTP, Campus Guardian |
+| Access | acc1, acc2, acc3, srv-sw | Alpine VLAN-aware bridge, RSTP, Campus Guardian |
 | Servers (VLAN 40) | dhcp, dns, radius, syslog, ntp, web | Kea, unbound, FreeRADIUS, rsyslog, chrony, nginx |
 | Endpoints | pc-student, attacker, phone, pc-faculty, pc-staff, pc-library, pc-guest, branch-host | network-multitool / Alpine |
 
@@ -86,8 +92,8 @@ pc-guest (VLAN 60). srv-sw has the six servers. branch-host sits behind edge2 on
 | Milestone | Scope | Status |
 |---|---|---|
 | M1 | Topology skeleton boots | done |
-| M2 | L2 fabric + VLANs | next |
-| M3 | Core routing, inter-VLAN, policy | pending |
+| M2 | L2 fabric + VLANs | done (`make accept M=M2`) |
+| M3 | Core routing, inter-VLAN, policy | next |
 | M4 | VRRP gateway HA | pending |
 | M5 | RSTP + LACP | pending |
 | M6 | Campus Guardian plane | pending |

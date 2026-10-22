@@ -74,8 +74,51 @@ Claude Code records blockers, deviations from CLAUDE.md and verified facts here.
     `clab_admins`, and the Makefile only prefixes `sudo` for users outside that group.
     (The user's sudo asks for a password, and a `sudo` inside `make` would hang
     non-interactive runs.)
-14. **Branch for commits.** The repo was created fresh in M1, so milestone commits go
-    straight to `main`.
+14. **Commits are made by the user.** CLAUDE.md rule 5 asks for a commit after each
+    green milestone. The user has asked that Claude make no commits, so from M2 on,
+    green milestones are left uncommitted in the working tree for the user to commit.
+    (M1 was committed as `153bfdf` before that instruction.)
+
+15. **Core SVI numbering follows CLAUDE.md, not the original write-up.** CLAUDE.md
+    section 3 says the VLAN's master core uses `.2` and the backup `.3`. The original
+    Packet Tracer document always gave core1 `.2`. This build follows CLAUDE.md, so core2
+    is `.2` on VLANs 30, 50, 60 and 99, where it is VRRP master.
+16. **Inter-core L3 link on VLAN 200.** `10.10.200.0/30` rides the inter-core trunk as
+    SVI `vlan200` (core1 `.1`, core2 `.2`). VLAN 200 is allowed only on that trunk. It
+    is not in the section 3 VLAN table because it is a transit VLAN, not a user VLAN.
+17. **One VLAN-aware bridge per switch.** Access and core switches each run one
+    `br0` with VLAN filtering and no implicit VLAN 1. Access ports are untagged
+    members of one VLAN. Trunks are pruned to the VLANs the access switch actually
+    has, plus native VLAN 99 untagged (matching the original `native vlan 99`).
+    The core-to-core trunk carries every campus VLAN plus VLAN 200.
+18. **Access-switch management SVIs.** acc1, acc2, acc3 and srv-sw get `10.10.99.11`
+    to `.14` on VLAN 99, with a route to `10.10.0.0/16` via the VLAN 99 VIP. That
+    route works from M4 (VRRP); it is there so syslog and NTP can reach the switches
+    in M9. eth0 keeps containerlab's management default route.
+19. **M2 interim loop avoidance.** Until RSTP and LACP exist (M5), every access
+    switch keeps `eth-up2` (to core2) down, and the cores keep `eth-peer2` down, so
+    the L2 fabric is a tree. M5 removes both lines.
+20. **Bridge netfilter off on switches.** The WSL host loads `br_netfilter`, and
+    inside every container `bridge-nf-call-iptables` defaults to 1. That would push
+    bridged frames through the cores' nftables policy in M3, so access and core init
+    set the three `bridge-nf-call-*` sysctls to 0 in their own namespace.
+21. **Endpoint addresses (static until DHCP).** PCs use `.21` in their VLAN, the
+    attacker `10.10.20.66`, servers the section 3 IPs, branch-host `172.16.30.10`.
+    Every default gateway is the VLAN's VRRP VIP `.1`, which goes live in M4.
+22. **Address plan as data.** `nodes/common/addressing.sh` holds the section 3 plan
+    and the port/VLAN maps. Every init script and every host script reads it, so no
+    address is typed twice.
+23. **Derived images (built by `make images`).** `campus/access` is `alpine:3.20` plus
+    iproute2, nftables, tcpdump and python3 (BusyBox `ip` has no `bridge vlan`).
+    `campus/radius` is `freeradius/freeradius-server:3.2.10` plus iproute2 and ping,
+    because the upstream image has neither. FreeRADIUS is now pinned to 3.2.10
+    instead of `:latest`.
+24. **Ready markers.** Each node touches `/tmp/lab-ready` when its init finishes.
+    `make up`, `make redeploy`, `make verify` and `make accept` wait for all of them,
+    so `make up && make verify` never tests a half-configured lab.
+25. **Containerlab temporary link names.** Containerlab adds each veth under a
+    temporary `clab-…` name and then renames it. The link counter ignores those names
+    so init never starts configuring before the final interface names exist.
 
 ## Open items for later milestones
 
@@ -94,8 +137,13 @@ Claude Code records blockers, deviations from CLAUDE.md and verified facts here.
   (`/usr/sbin/charon-systemd`), not the classic `charon`. There is no separate `ml`
   plugin; ML-KEM must come from the `openssl` plugin (image has OpenSSL 3.5.7 and
   strongSwan 6.0.1). M8 checks this and records which proposal is negotiated.
-- **mstpd** is not packaged for Ubuntu 26.04. It is only needed inside the alpine
-  access-switch containers; availability there is checked in M5.
+- **M5: mstpd** is not packaged for Ubuntu 26.04, Alpine 3.20 or Alpine 3.22. M5
+  builds it from source in a derived image, or takes a CLAUDE.md section 7 fallback.
+- **M10: scapy** is not packaged for Alpine 3.20 or 3.22 either. The attacker image
+  will install it with pip.
+- **M3/M4: ARP flux on the cores.** Linux answers ARP for any of its addresses on
+  any interface by default. The cores will set `arp_ignore=1` and `arp_announce=2`
+  so each SVI only answers for its own VLAN.
 
 ## Milestone log
 
@@ -115,6 +163,22 @@ Claude Code records blockers, deviations from CLAUDE.md and verified facts here.
 - TopoViewer needs VS Code and was not checked from the CLI. The same graph renders
   via `containerlab graph --mermaid` and is kept in `docs/topology.md`.
 
+### M2 - L2 fabric + VLANs (green, 2026-10-22)
+
+`make accept M=M2`: 24 PASS, 0 FAIL, run right after a clean `make down && make up`.
+
+- M2.1 same VLAN, same switch: pc-student reaches the attacker (VLAN 20 on acc1).
+- M2.2 all 13 PCs and servers reach both core SVIs of their VLAN (exercises access
+  ports, pruned uplink trunks and the inter-core trunk).
+- M2.3 all four access-switch management SVIs reach both cores on native VLAN 99.
+- M2.4 core1 reaches core2 over the VLAN 200 /30.
+- M2.5 every uplink trunk carries exactly its pruned VLAN list with 99 untagged, and
+  the access switch, core1 and core2 ends agree.
+- M2.6 VLAN isolation: a VLAN 20 port using a VLAN 30 address cannot reach VLAN 30.
+
+`make verify`: V1 PASS, V2 to V12 SKIP. `make up` from clean takes about 18 s
+including the readiness wait. No node logs a warning during init.
+
 ## Fallbacks taken
 
 None yet.
@@ -124,11 +188,13 @@ None yet.
 | Image | Digest | Used by |
 |---|---|---|
 | `quay.io/frrouting/frr:10.4.5` | `sha256:b0faf7c8f3d8b09aea1e38f77603c745a66dbf5e26ef9718527c2fbb53cc3aed` | core1, core2 |
-| `alpine:3.20` | `sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc` | access switches, ISPs, servers, attacker |
+| `alpine:3.20` | `sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc` | ISPs, dhcp, dns, syslog, ntp, attacker; base of `campus/access` |
 | `debian:trixie-slim` | base of `campus/vpn` | edge1, edge2 (built locally) |
 | `campus/vpn:latest` | local build: strongSwan 6.0.1, FRR 10.3, nftables 1.1.3, OpenSSL 3.5.7 | edge1, edge2 |
 | `nginx:alpine` | `sha256:060849a174666c53439dc7cecbf8f67e225c7cbfb1a44ca97915d9a172a81e6d` | web |
-| `freeradius/freeradius-server:latest` | `sha256:cc7fd136e7b03e7b332d94297530318e824a4ecfedbce54562cced723e71e812` | radius |
+| `freeradius/freeradius-server:3.2.10` | base of `campus/radius` (3.2.10 = what `:latest` was on 2026-10-22) | radius |
+| `campus/radius:latest` | local build: FreeRADIUS 3.2.10 + iproute2, iputils-ping | radius |
+| `campus/access:latest` | local build: `alpine:3.20` + iproute2 6.9, nftables 1.0.9, tcpdump, python3 | acc1, acc2, acc3, srv-sw |
 | `wbitt/network-multitool:alpine-extra` | `sha256:00bf63b9e033362a4adf138c4b14d92bc6ce52446358fed4da14c2e16e8a64aa` | PCs, phone, branch-host |
 
 ## Questions for the user

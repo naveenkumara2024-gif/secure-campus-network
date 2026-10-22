@@ -1,10 +1,11 @@
 #!/bin/sh
-# nodes/servers/init.sh - Server farm, VLAN 40: dhcp, dns, radius, syslog, ntp, web (services arrive in M9)
+# nodes/servers/init.sh - server farm, VLAN 40: dhcp, dns, radius, syslog, ntp, web.
 #
-# M1 (topology skeleton): wait for containerlab to plug in this node's links,
-# bring them up and stay alive. Later milestones extend this file.
+# M2: static service IP (CLAUDE.md section 3) and default gateway 10.10.40.1.
+# Later: M9 starts each node's service (Kea, unbound, FreeRADIUS, rsyslog, chrony, nginx).
 . /lab/common/node-lib.sh
 
 wait_for_links
 links_up
+config_endpoint
 keep_alive

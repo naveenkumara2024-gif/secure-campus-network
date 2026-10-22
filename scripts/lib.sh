@@ -6,6 +6,9 @@ LAB="${LAB:-campus}"
 TOPO="${TOPO:-campus.clab.yml}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# The lab address plan (same file the nodes source).
+. "$REPO_ROOT/nodes/common/addressing.sh"
+
 # sudo only when not already root; plain docker when the user is in the docker group.
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
 if docker info >/dev/null 2>&1; then DOCKER="docker"; else DOCKER="$SUDO docker"; fi
@@ -54,6 +57,21 @@ lab_healthy() {
     [ "$(node_link_count "$n")" -ge "$(topo_link_count "$n")" ] || return 1
   done
   return 0
+}
+
+# Block until every node's init.sh has finished (it touches /tmp/lab-ready),
+# so `make up && make verify` never tests a half-configured lab.
+wait_lab_ready() {
+  local n t=0 pending
+  while :; do
+    pending=""
+    for n in $(topo_nodes); do
+      dx "$n" test -f /tmp/lab-ready 2>/dev/null || pending="$pending $n"
+    done
+    [ -z "$pending" ] && return 0
+    if [ "$t" -ge "${1:-90}" ]; then warn "not ready after ${t}s:$pending"; return 1; fi
+    sleep 2; t=$((t + 2))
+  done
 }
 
 # ---- acceptance-table output -------------------------------------------------
