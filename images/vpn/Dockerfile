@@ -7,4 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 # Ensure the 'ml' plugin (ML-KEM, FIPS 203) is enabled; openssl plugin (OpenSSL>=3.5) also provides it.
 # (verified in M8; containerlab overrides CMD with nodes/edge/init.sh)
+# Separate layer so the large install above stays cached.
+RUN apt-get update && apt-get install -y --no-install-recommends tcpdump \
+ && rm -rf /var/lib/apt/lists/*
 CMD ["sleep", "infinity"]

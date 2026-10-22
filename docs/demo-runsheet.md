@@ -50,9 +50,12 @@ Bring it back: `docker start clab-campus-core1` → preempt returns mastership.
 ```bash
 # Access switch has two uplinks (to core1 and core2); RSTP keeps one standby
 docker exec clab-campus-acc1 mstpctl showport br0                 # one FORWARDING, one DISCARDING
-docker exec clab-campus-pc-student ping 10.10.40.10 &             # to a server
+docker exec clab-campus-pc-student ping 10.10.20.1 &              # to its gateway, across the uplink
 docker exec clab-campus-acc1 ip link set eth-up1 down             # cut the active uplink
 ```
+> **Lab note:** the original line pinged `10.10.40.10` (the DHCP server). The
+> least-privilege policy (CLAUDE.md 5.3) lets students reach only web and DNS in the
+> server farm, so that ping is blocked by design. The gateway ping crosses the same uplink.
 **Expected:** RSTP moves the standby uplink to FORWARDING in **< 1 s**; ping continues.
 ```bash
 docker exec clab-campus-core1 cat /proc/net/bonding/bond0 2>/dev/null | grep -A2 "802.3ad"   # LACP aggregated
@@ -137,7 +140,8 @@ Open **Wireshark/Edgeshark** on the `edge1 ↔ edge2` public link and show:
 ```bash
 # Inter-VLAN policy: GUEST (60) cannot reach SERVER-FARM (40); STUDENTS can reach WEB only
 docker exec clab-campus-pc-guest   ping -c2 10.10.40.10          # blocked (policy)
-docker exec clab-campus-pc-student curl -s http://10.10.40.10    # allowed (web)
+docker exec clab-campus-pc-student curl -s http://10.10.40.15    # allowed (web)
+docker exec clab-campus-core2 nft list counter inet intervlan guest_isolation   # the guest drop, counted
 # AAA: SSH to a core authenticates via RADIUS
 docker exec clab-campus-core1 tail -f /var/log/auth.log &        # watch
 ssh netadmin@<core1-mgmt>                                        # FreeRADIUS Access-Accept

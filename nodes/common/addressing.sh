@@ -70,3 +70,36 @@ host_addr() {
 host_ip() { set -- $(host_addr "$1"); echo "${1%/*}"; }
 CAMPUS_HOSTS="pc-faculty pc-student attacker pc-library pc-staff pc-guest phone"
 SERVER_HOSTS="dhcp dns radius syslog ntp web"
+
+# ---- Routed core, WAN and branch (M3) ----------------------------------------
+CAMPUS_NET=10.10.0.0/16           # every campus VLAN; what the edges NAT
+BRANCH_NET=172.16.30.0/24         # remote branch LAN, reachable only through IPsec (M8)
+INFRA_NETS="10.10.200.0/30 10.10.211.0/30 10.10.212.0/30"   # core/edge transit links
+INTERNET_HOST=192.0.2.100         # "somewhere on the internet": loopback on both ISPs
+
+# Routed interface addresses: <node>:<interface>:<ip/len>.
+# ISP transit (192.0.2.0/30, TEST-NET-1) is not in CLAUDE.md section 3 (NOTES.md 8).
+P2P_ADDRS="core1:eth-edge:10.10.211.1/30   edge1:eth-core:10.10.211.2/30
+           core2:eth-edge:10.10.212.1/30   edge2:eth-core:10.10.212.2/30
+           edge1:eth-isp:203.0.113.1/30    isp1:eth-edge:203.0.113.2/30
+           edge2:eth-isp:198.51.100.1/30   isp2:eth-edge:198.51.100.2/30
+           isp1:eth-transit:192.0.2.1/30   isp2:eth-transit:192.0.2.2/30
+           edge2:eth-branch:172.16.30.1/24"
+p2p_addr() { for e in $P2P_ADDRS; do case "$e" in "$1:$2:"*) echo "${e##*:}"; return ;; esac; done; }
+addr_ip()  { echo "${1%/*}"; }
+# net_of 10.10.211.2/30 -> 10.10.211.0/30 (prefix lengths 24..32)
+net_of() {
+  local ip="${1%/*}" len="${1#*/}" last size
+  last="${ip##*.}"; size=$((1 << (32 - len)))
+  echo "${ip%.*}.$((last - last % size))/$len"
+}
+edge_isp()  { echo "isp${1#edge}"; }      # edge1 -> isp1
+edge_core() { echo "core${1#edge}"; }     # edge1 -> core1
+other_isp() { if [ "$1" = isp1 ]; then echo isp2; else echo isp1; fi; }
+# OSPF router IDs: the node's own transit address.
+router_id() {
+  case "$1" in
+    core1|core2) core_link_ip "$1" ;;
+    edge1|edge2) addr_ip "$(p2p_addr "$1" eth-core)" ;;
+  esac
+}

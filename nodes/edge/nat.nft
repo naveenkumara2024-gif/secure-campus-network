@@ -1,0 +1,40 @@
+#!/usr/sbin/nft -f
+# nodes/edge/nat.nft - EDGE-R1/2 perimeter filter + PAT (identical on both edges).
+#
+# Addresses come from /run/campus-defines.nft (generated from addressing.sh).
+include "/run/campus-defines.nft"
+
+table inet perimeter
+delete table inet perimeter
+table inet perimeter {
+    counter inbound_drop {}    # unsolicited connections from the internet
+    counter branch_bypass {}   # campus <-> branch traffic trying to skip the IPsec tunnel
+
+    chain forward {
+        type filter hook forward priority filter; policy accept;
+
+        ct state established,related accept
+        meta ipsec exists accept                     # decrypted VPN traffic (M8)
+
+        # Outside ACL: nothing from the internet may open a connection inward.
+        iifname "eth-isp" counter name inbound_drop drop
+
+        # The branch LAN hangs off edge2, but campus <-> branch must use the
+        # IPsec tunnel (M8), never this direct path in clear text.
+        iifname "eth-branch" oifname "eth-core" counter name branch_bypass drop
+        iifname "eth-core" oifname "eth-branch" counter name branch_bypass drop
+    }
+}
+
+table ip campus_nat
+delete table ip campus_nat
+table ip campus_nat {
+    counter nat_out {}         # flows translated to this edge's public address
+
+    chain postrouting {
+        type nat hook postrouting priority srcnat; policy accept;
+        # PAT campus and branch hosts to the public address. Branch-bound traffic is
+        # excluded: IPsec protects it and it keeps its private addresses.
+        oifname "eth-isp" ip saddr { $CAMPUS, $BRANCH } ip daddr != $BRANCH counter name nat_out masquerade
+    }
+}

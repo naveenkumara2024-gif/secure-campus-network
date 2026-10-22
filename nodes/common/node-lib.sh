@@ -111,6 +111,50 @@ config_endpoint() {
 }
 
 # Hand PID 1 over to a process that never exits.
+# ---- L3 helpers (M3) ---------------------------------------------------------
+
+# Containerlab gives every node a default route out eth0 (Docker NAT to the real
+# internet). Routers drop it so the lab's own routing is the only way out: the
+# "internet" is isp1/isp2, never the host's real connection.
+drop_mgmt_default() {
+  ip route del default dev eth0 2>/dev/null && log "removed eth0 default route"
+  return 0
+}
+
+# render <template> <output> KEY=value ...: replace every @KEY@ in the template.
+render() {
+  local tmpl="$1" out="$2" kv args=""; shift 2
+  for kv in "$@"; do args="$args -e s|@${kv%%=*}@|${kv#*=}|g"; done
+  sed $args "$tmpl" > "$out"
+  if grep -v '^[[:space:]]*[!#]' "$out" | grep -q '@[A-Z_]*@'; then log "WARNING: unrendered placeholders in $out"; fi
+}
+
+# nft_defines: the address plan as nftables `define`s, so .nft files hold only policy.
+nft_defines() {
+  local v s
+  echo "# generated at boot from nodes/common/addressing.sh - do not edit"
+  echo "define CAMPUS = $CAMPUS_NET"
+  echo "define BRANCH = $BRANCH_NET"
+  echo "define INFRA = { $(echo $INFRA_NETS | sed 's/ /, /g') }"
+  for v in $(vlan_ids); do
+    echo "define NET_$(vlan_name "$v" | tr '-' '_') = $(vlan_subnet "$v")"
+  done
+  for s in $SERVER_HOSTS; do
+    echo "define SRV_$(echo "$s" | tr 'a-z-' 'A-Z_') = $(host_ip "$s")"
+  done
+}
+
+# start_frr <daemons-file>: install the daemons list and start FRR (watchfrr).
+# frr.conf must already be rendered to /etc/frr/frr.conf.
+start_frr() {
+  run cp "$1" /etc/frr/daemons
+  [ -f /etc/frr/vtysh.conf ] || echo "service integrated-vtysh-config" > /etc/frr/vtysh.conf
+  mkdir -p /var/log/frr /var/run/frr
+  chown -R frr:frr /etc/frr /var/log/frr /var/run/frr 2>/dev/null
+  chmod 640 /etc/frr/frr.conf
+  run /usr/lib/frr/frrinit.sh start
+}
+
 # /tmp/lab-ready tells the host scripts (wait_lab_ready) this node is configured.
 keep_alive() {
   touch /tmp/lab-ready

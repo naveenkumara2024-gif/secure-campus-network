@@ -30,11 +30,19 @@ topology:
 
   groups:
     core:
-      image: quay.io/frrouting/frr:10.4.5   # Docker Hub frrouting/frr stops at v8.4.1 (NOTES.md)
+      image: campus/core:latest    # quay.io/frrouting/frr:10.4.5 + nftables/keepalived (images/core)
       binds: [nodes/core:/lab/node:ro]
       cmd: sh /lab/node/init.sh
       sysctls:
         net.ipv4.ip_forward: 1
+        # Each SVI answers ARP only for its own address (no ARP flux across VLANs).
+        net.ipv4.conf.all.arp_ignore: 1
+        net.ipv4.conf.all.arp_announce: 2
+        # Each routed flow crosses both VLAN masters; no reverse-path drops.
+        net.ipv4.conf.all.rp_filter: 0
+        net.ipv4.conf.default.rp_filter: 0
+        net.ipv4.conf.all.send_redirects: 0
+        net.ipv4.conf.default.send_redirects: 0
       labels: {graph-icon: switch, graph-group: core, graph-level: 3}
     edge:
       image: campus/vpn:latest     # built from images/vpn by `make images` (campus/* = local builds)
@@ -42,6 +50,8 @@ topology:
       cmd: sh /lab/node/init.sh
       sysctls:
         net.ipv4.ip_forward: 1
+        net.ipv4.conf.all.rp_filter: 0
+        net.ipv4.conf.default.rp_filter: 0
       labels: {graph-icon: router, graph-group: edge, graph-level: 2}
     isp:
       image: alpine:3.20

@@ -1,0 +1,38 @@
+! nodes/core/frr.conf.tmpl - rendered to /etc/frr/frr.conf by nodes/core/init.sh.
+! @KEYS@ come from nodes/common/addressing.sh.
+frr defaults traditional
+hostname @NODE@
+log file /var/log/frr/frr.log informational
+service integrated-vtysh-config
+!
+! Redistribute only real campus VLAN subnets (/24). Transit /30s run OSPF directly,
+! and a backup core's /32 SVI never leaks, so each VLAN is advertised by the core
+! that delivers it (its VRRP master). When VRRP moves a VIP (M4), the /24 moves too.
+ip prefix-list CAMPUS_SVIS seq 10 permit @CAMPUS_NET@ ge 24 le 24
+!
+route-map CONNECTED_TO_OSPF permit 10
+ match ip address prefix-list CAMPUS_SVIS
+exit
+!
+interface vlan@CORE_LINK_VLAN@
+ ip ospf network point-to-point
+ ip ospf hello-interval 1
+ ip ospf dead-interval 4
+exit
+!
+interface eth-edge
+ ip ospf network point-to-point
+ ip ospf hello-interval 1
+ ip ospf dead-interval 4
+exit
+!
+router ospf
+ ospf router-id @ROUTER_ID@
+ passive-interface default
+ no passive-interface vlan@CORE_LINK_VLAN@
+ no passive-interface eth-edge
+ network @CORE_LINK_NET@ area 0
+ network @EDGE_LINK_NET@ area 0
+ redistribute connected route-map CONNECTED_TO_OSPF
+exit
+!

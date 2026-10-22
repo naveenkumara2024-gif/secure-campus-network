@@ -92,8 +92,49 @@ assert() {
   if "$@" >/dev/null 2>&1; then result "$id" PASS "$desc"; else result "$id" FAIL "$desc"; fi
 }
 
-# Campus Guardian named-counter packet value (M6+): guardian_counter <node> <counter>
-guardian_counter() {
-  dx "$1" nft list counter netdev guardian "$2" 2>/dev/null |
+# check <ID> <description> <command...>: PASS if the command succeeds (output kept).
+check() {
+  local id="$1" desc="$2"; shift 2
+  if "$@"; then result "$id" PASS "$desc"; else result "$id" FAIL "$desc"; fi
+}
+
+# retry <seconds> <command...>: re-run once a second until it succeeds.
+retry() {
+  local t="$1" i=0; shift
+  until "$@"; do i=$((i + 1)); [ "$i" -ge "$t" ] && return 1; sleep 1; done
+}
+
+# ---- probes run inside lab nodes -------------------------------------------------
+ping_ok()      { dx "$1" ping -c 3 -W 2 "$2" >/dev/null 2>&1; }     # any reply
+ping_blocked() { ! dx "$1" ping -c 2 -W 1 "$2" >/dev/null 2>&1; }   # no reply at all
+
+# curl_rc <node> <url>: curl exit code. 0 = success, 7 = connection refused (the
+# packet reached the server), 28 = timeout (a firewall dropped it silently).
+curl_rc()   { dx "$1" curl -s -m 3 -o /dev/null "$2" >/dev/null 2>&1; echo $?; }
+http_code() { dx "$1" curl -s -m 3 -o /dev/null -w '%{http_code}' "$2" 2>/dev/null; }
+
+# nft_counter <node> <family> <table> <counter>: packets seen by a named counter.
+nft_counter() {
+  dx "$1" nft list counter "$2" "$3" "$4" 2>/dev/null |
     awk '{for (i = 1; i < NF; i++) if ($i == "packets") {print $(i + 1); exit}}'
+}
+# Campus Guardian counter (M6+): guardian_counter <node> <counter>
+guardian_counter() { nft_counter "$1" netdev guardian "$2"; }
+
+# OSPF adjacency plan: which router IDs each router must see as neighbours.
+ospf_peers() {
+  case "$1" in
+    core1) echo "$(router_id core2) $(router_id edge1)" ;;
+    core2) echo "$(router_id core1) $(router_id edge2)" ;;
+    edge1) router_id core1 ;;
+    edge2) router_id core2 ;;
+  esac
+}
+# ospf_full <node> <router-id...>: FRR reports every listed neighbour as Full.
+ospf_full() {
+  local n="$1" rid json; shift
+  json=$(dx "$n" vtysh -c "show ip ospf neighbor json" 2>/dev/null) || return 1
+  for rid in "$@"; do
+    [ "$(jq -r --arg r "$rid" '.neighbors[$r][0].converged // empty' <<<"$json")" = Full ] || return 1
+  done
 }

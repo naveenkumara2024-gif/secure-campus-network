@@ -1,0 +1,63 @@
+#!/usr/sbin/nft -f
+# nodes/core/intervlan.nft - least-privilege inter-VLAN policy (identical on both cores).
+#
+# Addresses come from /run/campus-defines.nft, generated at boot from
+# nodes/common/addressing.sh. This file holds only policy.
+#
+# Stateful. That works with split VRRP masters because a backup core's SVI is a /32:
+# every routed flow is delivered by the master core of its destination VLAN, so
+# each core on the path sees both directions of the flow (NOTES.md decision 26).
+include "/run/campus-defines.nft"
+
+# Zone groups: policy vocabulary built from the generated VLAN defines.
+define USERS    = { $NET_FACULTY_ADMIN, $NET_STUDENTS, $NET_LIBRARY, $NET_WIFI_STAFF }
+define INTERNAL = { $CAMPUS, $BRANCH }
+
+table inet intervlan
+delete table inet intervlan
+table inet intervlan {
+    counter guest_isolation {}   # guest Wi-Fi tried to reach the campus or the branch
+    counter policy_deny {}       # anything not explicitly allowed (least privilege)
+    counter invalid_state {}     # packets conntrack cannot match to any flow
+
+    chain forward {
+        type filter hook forward priority filter; policy drop;
+
+        ct state established,related accept
+        ct state invalid counter name invalid_state drop
+
+        # Infrastructure: core/edge transit addresses (OSPF peers, edge syslog/NTP).
+        ip saddr $INFRA accept
+
+        # 1. Guest Wi-Fi: internet only.
+        ip saddr $NET_WIFI_GUEST ip daddr $INTERNAL counter name guest_isolation drop
+        ip saddr $NET_WIFI_GUEST accept
+
+        # 2. Shared services in the server farm.
+        ip saddr { $USERS, $NET_VOICE, $NET_MGMT_NATIVE, $BRANCH } ip daddr $SRV_DNS meta l4proto { tcp, udp } th dport 53 accept
+        ip saddr { $USERS, $NET_VOICE, $NET_MGMT_NATIVE } ip daddr $SRV_NTP udp dport 123 accept
+        ip saddr { $USERS, $BRANCH } ip daddr $SRV_WEB tcp dport { 80, 443 } accept
+
+        # 3. Management VLAN (switches): central syslog and RADIUS.
+        ip saddr $NET_MGMT_NATIVE ip daddr $SRV_SYSLOG udp dport 514 accept
+        ip saddr $NET_MGMT_NATIVE ip daddr $SRV_RADIUS udp dport { 1812, 1813 } accept
+
+        # 4. Faculty/admin VLAN: everything internal (the administrators).
+        ip saddr $NET_FACULTY_ADMIN ip daddr $INTERNAL accept
+
+        # 5. Staff Wi-Fi: the whole server farm.
+        ip saddr $NET_WIFI_STAFF ip daddr $NET_SERVER_FARM accept
+
+        # 6. Diagnostics: ping between internal user VLANs and the branch.
+        ip saddr { $USERS, $BRANCH } ip daddr { $USERS, $BRANCH } icmp type echo-request accept
+
+        # 7. User VLANs may open anything at the branch site (over the VPN, M8).
+        ip saddr $USERS ip daddr $BRANCH accept
+
+        # 8. Internet access for everyone except guest (guest got it in rule 1).
+        ip saddr { $USERS, $NET_VOICE, $NET_SERVER_FARM, $NET_MGMT_NATIVE } ip daddr != $INTERNAL accept
+
+        # Everything else: denied and counted.
+        counter name policy_deny drop
+    }
+}

@@ -1,0 +1,26 @@
+! nodes/edge/frr.conf.tmpl - rendered to /etc/frr/frr.conf by nodes/edge/init.sh.
+! @KEYS@ come from nodes/common/addressing.sh.
+frr defaults traditional
+hostname @NODE@
+log file /var/log/frr/frr.log informational
+service integrated-vtysh-config
+!
+! Default route to this edge's ISP. If the ISP link fails the route goes inactive
+! and this edge stops originating a default into OSPF, so the campus fails over to
+! the other edge. Both edges use the same metric: each core exits via its nearest edge.
+ip route 0.0.0.0/0 @ISP_GW@
+!
+interface eth-core
+ ip ospf network point-to-point
+ ip ospf hello-interval 1
+ ip ospf dead-interval 4
+exit
+!
+router ospf
+ ospf router-id @ROUTER_ID@
+ passive-interface default
+ no passive-interface eth-core
+ network @CORE_LINK_NET@ area 0
+ default-information originate metric 10 metric-type 2
+exit
+!

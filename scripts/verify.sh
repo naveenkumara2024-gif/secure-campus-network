@@ -29,9 +29,46 @@ check_V1() {
   fi
 }
 
+# V2 - every core/edge sees all its planned OSPF neighbours as Full.
+check_V2() {
+  local n bad=() summary=""
+  for n in core1 core2 edge1 edge2; do
+    if retry 30 ospf_full "$n" $(ospf_peers "$n"); then
+      summary="$summary $n($(ospf_peers "$n" | wc -w))"
+    else
+      bad+=("$n")
+    fi
+  done
+  if [ "${#bad[@]}" -eq 0 ]; then result V2 PASS "OSPF all Full:$summary"
+  else result V2 FAIL "OSPF neighbours not Full on: ${bad[*]}"; fi
+}
+
+# V3 - routing between VLAN 20 and VLAN 30, both directions.
+check_V3() {
+  if ping_ok pc-student "$(host_ip pc-library)" && ping_ok pc-library "$(host_ip pc-student)"; then
+    result V3 PASS "VLAN 20 pc-student <-> VLAN 30 pc-library"
+  else
+    result V3 FAIL "VLAN 20 pc-student <-> VLAN 30 pc-library ping failed"
+  fi
+}
+
+# V4 - guest (60) -> server farm (40) blocked and counted; student -> web works.
+check_V4() {
+  local gm b a guest_ok web
+  gm=$(vlan_master 60)
+  b=$(nft_counter "$gm" inet intervlan guest_isolation)
+  ping_blocked pc-guest "$(host_ip dhcp)"; guest_ok=$?
+  a=$(nft_counter "$gm" inet intervlan guest_isolation)
+  web=$(http_code pc-student "http://$(host_ip web)/")
+  if [ "$guest_ok" -eq 0 ] && [ "${a:-0}" -gt "${b:-0}" ] && [ "$web" = 200 ]; then
+    result V4 PASS "guest -> $(host_ip dhcp) blocked (guest_isolation $b -> $a); student -> web HTTP $web"
+  else
+    result V4 FAIL "guest blocked=$([ "$guest_ok" -eq 0 ] && echo yes || echo NO) counter $b -> $a; student -> web HTTP ${web:-none}"
+  fi
+}
+
 # Rows not implemented yet -> milestone that will implement them.
 declare -A PENDING=(
-  [V2]="M3 OSPF"            [V3]="M3 inter-VLAN routing" [V4]="M3 inter-VLAN policy"
   [V5]="M4 VRRP failover"   [V6]="M5 RSTP/LACP"          [V7]="M6 Guardian loads"
   [V8]="M10 Guardian drops" [V9]="M10 bystander safe"    [V10]="M10 quarantine"
   [V11]="M8 PQ-IPsec"       [V12]="M9 services"

@@ -119,6 +119,61 @@ Claude Code records blockers, deviations from CLAUDE.md and verified facts here.
 25. **Containerlab temporary link names.** Containerlab adds each veth under a
     temporary `clab-…` name and then renames it. The link counter ignores those names
     so init never starts configuring before the final interface names exist.
+26. **Each VLAN is delivered by its VRRP master (stateful policy with split masters).**
+    With core1 master for VLANs 10/20/40/100 and core2 for 30/50/60/99, a plain design
+    routes 20 -> 30 through core1 and the reply through core2, so a stateful firewall
+    on either core sees only half of each flow. Fix: the master core's SVI is `.2/24`
+    and the backup core's SVI is `.3/32`. The backup has no connected route into the
+    VLAN, so it routes to it over OSPF via the master. Every routed flow then crosses
+    the master of its source VLAN and the master of its destination VLAN, in both
+    directions, and both cores see whole flows. Replies sourced from a backup's /32
+    SVI use a per-VLAN `ip rule` table and leave directly through that SVI. When VRRP
+    moves a VIP (`.1/24`) in M4, the connected /24 and its OSPF advertisement move
+    with it. Proven by M3.3: traceroute student to library is core1, core2, host.
+27. **Interim static VIP.** Until keepalived arrives (M4), the master core holds the
+    gateway VIP `.1/24` as a static second address, so PC gateways work from M3.
+28. **OSPF design.** Area 0 on the inter-core VLAN 200 /30 and the two core-edge /30s,
+    point-to-point network type, hello 1 s / dead 4 s, every other interface passive.
+    Cores redistribute connected routes filtered to `/24`s inside `10.10.0.0/16`, so
+    transit /30s and backup /32s never leak. Router IDs are the transit addresses
+    (core1 `10.10.200.1`, core2 `10.10.200.2`, edge1 `10.10.211.2`, edge2
+    `10.10.212.2`). Each edge has a static default to its ISP and originates it into
+    OSPF (E2, metric 10 on both), so each core exits via its nearest edge, and an edge
+    whose ISP link dies stops originating.
+29. **Inter-VLAN policy (`nodes/core/intervlan.nft`).** Stateful, identical on both
+    cores, default drop. Guest: internet only (drops counted in `guest_isolation`).
+    DNS for users, voice, management and branch. NTP for users, voice and management.
+    Web 80/443 for users and branch. Management VLAN: syslog and RADIUS. Faculty:
+    everything internal. Staff Wi-Fi: the whole server farm. Ping between user VLANs
+    and the branch. Users: anything at the branch. Internet for everyone but guest.
+    Everything else is dropped and counted in `policy_deny`. "Users" means VLANs 10,
+    20, 30 and 50. Students therefore reach web and DNS in the server farm but cannot
+    ping servers, per CLAUDE.md 5.3 "else deny".
+30. **Policy files hold no addresses.** Init generates `/run/campus-defines.nft` from
+    `addressing.sh` (`NET_STUDENTS`, `SRV_WEB`, `CAMPUS`, `INFRA`, ...), and every
+    `.nft` file includes it.
+31. **Edges and ISPs.** Edges run a perimeter filter (`inbound_drop` for unsolicited
+    internet connections, `branch_bypass` blocking clear-text campus <-> branch on
+    edge2) and PAT (`nat_out`) for campus and branch traffic, excluding traffic to the
+    branch (that goes in the tunnel in M8). ISPs know only public addresses. The
+    "internet host" `192.0.2.100` is a loopback on both ISPs, reachable via either
+    edge.
+32. **The lab never touches the real internet.** Containerlab's eth0 default route
+    (Docker NAT to the host's real connection) is removed on cores, edges and ISPs, and
+    PCs/servers use lab gateways. M3.5 proves `1.1.1.1` is unreachable.
+33. **Core sysctls.** `arp_ignore=1` and `arp_announce=2` (an SVI answers ARP only for
+    its own address), `rp_filter=0` (routed paths differ per core by design),
+    `send_redirects=0`. Edges also run with `rp_filter=0` (IPsec in M8).
+34. **Runsheet copy fixes** (`docs/demo-runsheet.md`). Phase 5 pointed the student's
+    "allowed (web)" curl at `10.10.40.10`, which is the DHCP server in CLAUDE.md
+    section 3; the web server is `10.10.40.15`. Phase 2 kept a student ping running to
+    `10.10.40.10`, which the least-privilege policy blocks by design; it now pings the
+    student gateway, which crosses the same uplink. `REFINED_PROJECT.md` section 6
+    still has both original lines (see Questions for the user).
+35. **Web server early.** nginx on `web` starts in M3 because the student -> web policy
+    test needs it. The other services still arrive in M9.
+36. **Docker's own `table ip nat` in each container** is Docker's embedded-DNS rule
+    set, not part of the lab policy. It is harmless and left alone.
 
 ## Open items for later milestones
 
@@ -141,9 +196,9 @@ Claude Code records blockers, deviations from CLAUDE.md and verified facts here.
   builds it from source in a derived image, or takes a CLAUDE.md section 7 fallback.
 - **M10: scapy** is not packaged for Alpine 3.20 or 3.22 either. The attacker image
   will install it with pip.
-- **M3/M4: ARP flux on the cores.** Linux answers ARP for any of its addresses on
-  any interface by default. The cores will set `arp_ignore=1` and `arp_announce=2`
-  so each SVI only answers for its own VLAN.
+- **M4: VRRP replaces the static VIP.** keepalived must own `.1/24` (decision 27 goes
+  away). VRRP timers need to be short enough for the "gateway ping loses at most 2
+  packets" target in V5.
 
 ## Milestone log
 
@@ -179,6 +234,26 @@ Claude Code records blockers, deviations from CLAUDE.md and verified facts here.
 `make verify`: V1 PASS, V2 to V12 SKIP. `make up` from clean takes about 18 s
 including the readiness wait. No node logs a warning during init.
 
+### M3 - core routing, inter-VLAN routing, policy (green, 2026-10-22)
+
+`make accept M=all`: 47 PASS, 0 FAIL (M2 24 + M3 23), run right after a clean
+`make down && make up`. `make verify`: V1 to V4 PASS, V5 to V12 SKIP.
+
+- M3.1 OSPF Full: core1 with core2 and edge1, core2 with core1 and edge2, each edge
+  with its core.
+- M3.2 each core reaches the other core's VLANs via OSPF over VLAN 200, each core's
+  default comes from its own edge, both edges learned all 8 VLAN /24s.
+- M3.3 pc-student <-> pc-library both ways; traceroute student -> library is
+  `10.10.20.2, 10.10.200.2, 10.10.30.21` (core1, then core2, then host).
+- M3.4 guest -> server farm and guest -> student blocked, `guest_isolation` rose on
+  core2; student -> web returns HTTP 200; student -> web:8080 times out (dropped) while
+  faculty -> web:8080 is refused by the server (allowed through); student -> DHCP server
+  and voice -> student blocked, `policy_deny` rose on core1.
+- M3.5 pc-student reaches the internet host through edge1 PAT and pc-guest through
+  edge2 PAT (`nat_out` rose on each); `1.1.1.1` is unreachable.
+- M3.6 a connection attempt from isp1 into the campus is dropped by edge1
+  (`inbound_drop` rose).
+
 ## Fallbacks taken
 
 None yet.
@@ -187,7 +262,8 @@ None yet.
 
 | Image | Digest | Used by |
 |---|---|---|
-| `quay.io/frrouting/frr:10.4.5` | `sha256:b0faf7c8f3d8b09aea1e38f77603c745a66dbf5e26ef9718527c2fbb53cc3aed` | core1, core2 |
+| `quay.io/frrouting/frr:10.4.5` | `sha256:b0faf7c8f3d8b09aea1e38f77603c745a66dbf5e26ef9718527c2fbb53cc3aed` | base of `campus/core` |
+| `campus/core:latest` | local build: FRR 10.4.5 (Alpine 3.22) + nftables 1.1.3, keepalived 2.3.1, tcpdump | core1, core2 |
 | `alpine:3.20` | `sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc` | ISPs, dhcp, dns, syslog, ntp, attacker; base of `campus/access` |
 | `debian:trixie-slim` | base of `campus/vpn` | edge1, edge2 (built locally) |
 | `campus/vpn:latest` | local build: strongSwan 6.0.1, FRR 10.3, nftables 1.1.3, OpenSSL 3.5.7 | edge1, edge2 |
@@ -199,4 +275,8 @@ None yet.
 
 ## Questions for the user
 
-None blocking yet.
+- **REFINED_PROJECT.md section 6 has two lines that conflict with CLAUDE.md.** Phase 5
+  curls `10.10.40.10` as "allowed (web)", but the web server is `10.10.40.15`. Phase 2
+  pings `10.10.40.10` from pc-student, which the least-privilege policy blocks. The
+  demo copy in `docs/demo-runsheet.md` is fixed (decision 34). Should
+  `REFINED_PROJECT.md` get the same two-line fix? Not blocking.

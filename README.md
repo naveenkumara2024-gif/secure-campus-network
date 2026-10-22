@@ -93,8 +93,8 @@ pc-guest (VLAN 60). srv-sw has the six servers. branch-host sits behind edge2 on
 |---|---|---|
 | M1 | Topology skeleton boots | done |
 | M2 | L2 fabric + VLANs | done (`make accept M=M2`) |
-| M3 | Core routing, inter-VLAN, policy | next |
-| M4 | VRRP gateway HA | pending |
+| M3 | Core routing, inter-VLAN, policy | done (`make accept M=M3`) |
+| M4 | VRRP gateway HA | next |
 | M5 | RSTP + LACP | pending |
 | M6 | Campus Guardian plane | pending |
 | M7 | Guardian DHCP controller | pending |
