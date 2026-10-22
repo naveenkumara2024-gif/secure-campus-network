@@ -71,7 +71,7 @@ accept_M2() {
 }
 
 # ---- M3: core routing, inter-VLAN routing, least-privilege policy -----------------
-has_route() { dx "$1" ip route show "$2" 2>/dev/null | grep -q -- "$3"; }   # <node> <prefix> <pattern>
+has_route() { dx_has "$1" "$3" ip route show "$2"; }   # <node> <prefix> <pattern>
 ospf_vlan_routes() { dx "$1" ip route show proto ospf 2>/dev/null | grep -cE '^10\.10\.[0-9]+\.0/24 '; }
 edge_of() { echo "edge${1#core}"; }                                       # core1 -> edge1
 hops_to() { dx "$1" traceroute -I -n -w 1 -q 1 -m 6 "$2" 2>/dev/null | awk 'NR > 1 {print $2}' | tr '\n' ' ' | sed 's/ $//'; }
@@ -150,7 +150,59 @@ accept_M3() {
     [ "$r" -eq 0 -a "${a:-0}" -gt "${b:-0}" ]
 }
 
-MILESTONES="M2 M3"
+# ---- M4: gateway HA with VRRPv3 (keepalived) --------------------------------------
+# A whole-core outage (V5) needs the second uplinks, which RSTP enables in M5. Here
+# the VRRP mechanism is tested on its own: core1 hands its gateways over and back.
+gateway_ok() { dx_has "$1" "via $2" ip route show default && ping_ok "$1" "$2"; }   # <node> <gw>
+vrrp_heard() {   # vrrp_heard <listener> <vrid> <sender-ip> <prio>
+  dx_has "$1" "$3 > 224.0.0.18: VRRPv3, Advertisement, vrid $2, prio $4"     timeout 3 tcpdump -nnli "vlan$2" -c 2 vrrp
+}
+
+accept_M4() {
+  local v n gw lost rcv l2 r2 c1vlans ok
+
+  # M4.1 Every VLAN's VIP is held by its planned master, and only by it.
+  for v in $(vlan_ids); do
+    check M4.1 "VLAN $v gateway $(vlan_vip "$v") held by $(vlan_master "$v") only" \
+      [ "$(vip_holders "$v")" = "$(vlan_master "$v")" ]
+  done
+
+  # M4.2 Every PC and server uses its VLAN's VIP as default gateway, and it answers.
+  for n in $CAMPUS_HOSTS $SERVER_HOSTS; do
+    set -- $(host_addr "$n"); gw="$2"
+    check M4.2 "$n default gateway $gw (VIP) answers" gateway_ok "$n" "$gw"
+  done
+
+  # M4.3 Real VRRPv3 adverts on the wire: the backup core hears the master's.
+  check M4.3 "core2 hears VRRPv3 adverts for VRID 20 from core1 $(core_svi_ip 20 core1), prio 110" \
+    vrrp_heard core2 20 "$(core_svi_ip 20 core1)" 110
+
+  # M4.4 Failover: core1 stops VRRP while pc-student pings its gateway and a PC in
+  # another VLAN. Every core1 VIP must move to core2 and both pings keep going.
+  c1vlans=$(for v in $(vlan_ids); do [ "$(vlan_master "$v")" = core1 ] && echo "$v"; done)
+  bg_ping_start pc-student "$(vlan_vip 20)" gw
+  bg_ping_start pc-student "$(host_ip pc-library)" routed
+  sleep 2
+  dx core1 sh /lab/node/keepalived-ctl.sh stop >/dev/null
+  sleep 2
+  ok=0; for v in $c1vlans; do [ "$(vip_holders "$v")" = core2 ] || ok=1; done
+  check M4.4 "core1 VRRP down: VIPs of VLANs $(echo $c1vlans) moved to core2" [ "$ok" -eq 0 ]
+
+  # M4.5 Preempt: core1 comes back with priority 110 and takes its gateways back.
+  dx core1 sh /lab/node/keepalived-ctl.sh start >/dev/null
+  sleep 3
+  ok=0; for v in $c1vlans; do [ "$(vip_holders "$v")" = core1 ] || ok=1; done
+  check M4.5 "core1 VRRP back: preempt returned VLANs $(echo $c1vlans) to core1" [ "$ok" -eq 0 ]
+  sleep 1
+  read -r lost rcv <<<"$(bg_ping_lost pc-student gw)"
+  read -r l2 r2 <<<"$(bg_ping_lost pc-student routed)"
+  check M4.5 "gateway ping through failover and preempt: $lost lost, $rcv received (limit 2)" \
+    [ "$rcv" -gt 20 -a "$lost" -le 2 ]
+  check M4.5 "routed ping VLAN 20 -> 30 through both: $l2 lost, $r2 received (limit 2)" \
+    [ "$r2" -gt 20 -a "$l2" -le 2 ]
+}
+
+MILESTONES="M2 M3 M4"
 want="${1:-all}"
 [ "$want" = all ] && want="$MILESTONES"
 wait_lab_ready 60 || true

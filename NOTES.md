@@ -174,6 +174,38 @@ Claude Code records blockers, deviations from CLAUDE.md and verified facts here.
     test needs it. The other services still arrive in M9.
 36. **Docker's own `table ip nat` in each container** is Docker's embedded-DNS rule
     set, not part of the lab policy. It is harmless and left alone.
+37. **VRRPv3, not VRRPv2, and therefore no VRRP authentication.** CLAUDE.md 5.4 asks
+    for "authentication". Only VRRPv2 has an auth field, and v2 adverts are at least
+    1 s apart, so a dead master is replaced after about 3.6 s (3 or 4 lost pings,
+    over the V5 limit of 2). VRRPv3 (RFC 5798) allows sub-second adverts but removed
+    authentication because it gave no real protection. This build uses VRRPv3 with
+    a 0.3 s advert (master down in about 1 s). VRRP runs only on core SVIs, and from
+    M6 Campus Guardian stops hosts on access ports from injecting frames, which is
+    the protection the old auth string pretended to give.
+38. **keepalived layout.** One `vrrp_instance` per VLAN, VRID = VLAN id, priority 110
+    on the master core and 100 on the backup, preempt on, VIP `.1/24` on `vlanN`.
+    The config is rendered from `nodes/core/keepalived.conf.tmpl` (a global part plus
+    an instance part rendered per VLAN). `nodes/core/keepalived-ctl.sh start|stop|status`
+    is the one way to start or stop VRRP (init, tests and demo). The interim static
+    VIP from decision 27 is gone.
+39. **M4 tests VRRP on its own; the whole-core failure (V5) moves to M5.** Each access
+    switch still has only its core1 uplink up (decision 19), so stopping all of core1
+    would cut every PC off at L2 whatever VRRP does. M4 therefore stops core1's
+    keepalived (it sends priority-0 adverts and drops its VIPs, exactly what a
+    shutting-down router does) and checks takeover and preempt. V5, stopping the
+    whole core1 container, is enabled in M5 once RSTP brings the second uplinks up.
+40. **One packet lost per hand-over, and why.** During each hand-over one echo to the
+    gateway can hit a brief forwarding loop: the PC still uses the old master's MAC
+    for `.1`, the old master forwards it to the new one before the new one has added
+    the VIP, and the new one routes it back. It expires with "TTL exceeded". The gratuitous
+    ARPs fix the PC's cache within the same 0.2 s. Measured: 1 lost per stop + start
+    cycle at one ping per 0.2 s, 0 lost on routed VLAN 20 to VLAN 30 traffic.
+41. **iputils `ping -w` quits at the first ICMP error.** Failover tests use `ping -c`
+    and count only real echo replies.
+42. **Test scripts never pipe into `grep -q`.** With `pipefail`, `grep -q` exiting at
+    the first match kills the command feeding it and fails the pipeline. Scripts
+    capture output first (`dx_has`).
+
 
 ## Open items for later milestones
 
@@ -196,9 +228,11 @@ Claude Code records blockers, deviations from CLAUDE.md and verified facts here.
   builds it from source in a derived image, or takes a CLAUDE.md section 7 fallback.
 - **M10: scapy** is not packaged for Alpine 3.20 or 3.22 either. The attacker image
   will install it with pip.
-- **M4: VRRP replaces the static VIP.** keepalived must own `.1/24` (decision 27 goes
-  away). VRRP timers need to be short enough for the "gateway ping loses at most 2
-  packets" target in V5.
+- **M5: V5 whole-core failover.** With RSTP and the second uplinks live, V5 stops the
+  whole core1 container while pc-student pings its gateway (limit 2 lost), checks the
+  VIPs move to core2, then starts core1 and checks preempt. Plain `docker stop/start`
+  loses lab links on start (see the M4 / runsheet item above); M5 decides between
+  `containerlab stop/start --node` and documenting the right command in the runsheet.
 
 ## Milestone log
 
@@ -253,6 +287,19 @@ including the readiness wait. No node logs a warning during init.
   edge2 PAT (`nat_out` rose on each); `1.1.1.1` is unreachable.
 - M3.6 a connection attempt from isp1 into the campus is dropped by edge1
   (`inbound_drop` rose).
+
+### M4 - gateway HA with VRRPv3 (green, 2026-10-22)
+
+`make accept M=all`: 73 PASS, 0 FAIL (M2 24, M3 23, M4 26), right after a clean
+`make down && make up`. M4 alone passed three runs in a row. `make verify`: V1 to V4
+PASS; V5 SKIP until M5 (decision 39).
+
+- M4.1 each of the 8 VIPs is held by its planned master core and only by it.
+- M4.2 all 13 PCs and servers route via their VLAN's VIP and it answers.
+- M4.3 core2 captures core1's VRRPv3 adverts on vlan20 (vrid 20, prio 110, every 0.3 s).
+- M4.4 core1 stops VRRP: VIPs of VLANs 10, 20, 40 and 100 move to core2.
+- M4.5 core1 restarts VRRP: preempt returns them. Through both: gateway ping lost 1 of
+  about 66, routed VLAN 20 to VLAN 30 ping lost 0.
 
 ## Fallbacks taken
 

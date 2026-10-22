@@ -103,3 +103,6 @@ router_id() {
     edge1|edge2) addr_ip "$(p2p_addr "$1" eth-core)" ;;
   esac
 }
+
+# ---- Gateway HA (M4) -----------------------------------------------------------
+VRRP_ADVERT=0.3                   # VRRPv3 advert interval (s); master down after ~3x

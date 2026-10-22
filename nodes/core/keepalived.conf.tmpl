@@ -1,0 +1,27 @@
+# nodes/core/keepalived.conf.tmpl - rendered to /etc/keepalived/keepalived.conf by
+# nodes/core/init.sh. The part above the INSTANCE marker is rendered once; the part
+# below it once per campus VLAN. Values come from nodes/common/addressing.sh.
+#
+# VRRPv3 (RFC 5798): sub-second adverts, so a dead master is replaced in about a
+# second. VRRPv3 has no authentication field (RFC 5798 removed it); see NOTES.md.
+global_defs {
+    router_id @NODE@
+    vrrp_version 3
+    vrrp_garp_master_delay 1
+    vrrp_garp_master_repeat 3
+    script_user root
+    enable_script_security
+}
+#### INSTANCE ####
+
+# VLAN @VID@ (@VNAME@): master @MASTER@, this core priority @PRIO@
+vrrp_instance VLAN@VID@ {
+    state BACKUP                 # start as backup; priority decides, preempt is on
+    interface vlan@VID@
+    virtual_router_id @VID@
+    priority @PRIO@
+    advert_int @ADVERT@
+    virtual_ipaddress {
+        @VIP@/24 dev vlan@VID@
+    }
+}

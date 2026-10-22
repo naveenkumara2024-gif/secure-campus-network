@@ -92,6 +92,15 @@ assert() {
   if "$@" >/dev/null 2>&1; then result "$id" PASS "$desc"; else result "$id" FAIL "$desc"; fi
 }
 
+# dx_has <node> <pattern> <command...>: the command's output (inside the node)
+# contains the pattern. Output is captured first: piping into `grep -q` would
+# kill the command early (SIGPIPE) and fail the pipeline under `pipefail`.
+dx_has() {
+  local n="$1" pat="$2" out; shift 2
+  out=$(dx "$n" "$@" 2>/dev/null)
+  grep -q -- "$pat" <<<"$out"
+}
+
 # check <ID> <description> <command...>: PASS if the command succeeds (output kept).
 check() {
   local id="$1" desc="$2"; shift 2
@@ -120,6 +129,28 @@ nft_counter() {
 }
 # Campus Guardian counter (M6+): guardian_counter <node> <counter>
 guardian_counter() { nft_counter "$1" netdev guardian "$2"; }
+
+# Continuous ping inside a node (one echo every 0.2 s, at most 60 s), for failover tests.
+# bg_ping_start <node> <ip> <tag>  ...  bg_ping_lost <node> <tag> -> "<lost> <received>"
+# Lost = sequence numbers with no echo reply between the first and the last reply.
+# (-c, not -w: iputils ping -w quits at the first ICMP error.)
+bg_ping_start() {
+  $DOCKER exec -d "$(cname "$1")" sh -c "ping -i 0.2 -c 300 $2 > /tmp/ping-$3.log 2>&1"
+}
+bg_ping_lost() {
+  dx "$1" sh -c "pkill -INT -x ping; sleep 0.5; cat /tmp/ping-$2.log" 2>/dev/null |
+    grep 'bytes from' | grep -oE 'icmp_seq=[0-9]+' | cut -d= -f2 |
+    awk 'NR == 1 {p = $1; n = 1; next} {if ($1 > p + 1) l += $1 - p - 1; p = $1; n++} END {print l + 0, n + 0}'
+}
+
+# vip_holders <vid>: which cores currently hold that VLAN's gateway VIP.
+vip_holders() {
+  local v="$1" n out=""
+  for n in core1 core2; do
+    dx_has "$n" " $(vlan_vip "$v")/24" ip -4 addr show dev "vlan$v" && out="$out $n"
+  done
+  echo $out
+}
 
 # OSPF adjacency plan: which router IDs each router must see as neighbours.
 ospf_peers() {

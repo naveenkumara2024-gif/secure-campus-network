@@ -69,7 +69,7 @@ check_V4() {
 
 # Rows not implemented yet -> milestone that will implement them.
 declare -A PENDING=(
-  [V5]="M4 VRRP failover"   [V6]="M5 RSTP/LACP"          [V7]="M6 Guardian loads"
+  [V5]="M5: stopping a whole core needs the second uplinks; VRRP itself passes make accept M=M4" [V6]="M5 RSTP/LACP"          [V7]="M6 Guardian loads"
   [V8]="M10 Guardian drops" [V9]="M10 bystander safe"    [V10]="M10 quarantine"
   [V11]="M8 PQ-IPsec"       [V12]="M9 services"
 )
